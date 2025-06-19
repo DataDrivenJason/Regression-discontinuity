@@ -1,0 +1,694 @@
+---
+title: "Assignment 2: Regression Discontinuity"
+author: "Jason McGrath - 19503629"
+format: pdf
+editor: visual
+---
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(haven)
+library(stargazer)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(patchwork)
+library(binsreg)
+library(rdrobust)
+
+data_rdd_assignment <- read_dta("~/Masters 2023/Masters Year 2/Causal Inference and Policy Evaulation/Assignments/Assignment_2/data_rdd_assignment.dta")
+
+data <- data_rdd_assignment
+```
+
+# Task 1
+
+## Part 1
+
+The discontinuity in benefit duration at age 40 creates a sudden, policy-induced change in how long individuals can receive unemployment benefits. Specifically, individuals who are just over age 40 receive longer benefit durations than those just under 40.\
+\
+Since individuals just above and below age 40 are similar in all other respects, we can treat the cutoff as generating quasi-random variation in benefit duration.\
+\
+This allows us to compare outcomes — like log wages in the new job — for individuals just below and just above the cutoff. If we observe a jump in wages at the cutoff, we can attribute it to the effect of longer benefit duration, since that’s the only factor that changes discontinuously at age 40.\
+\
+In other words, the causal effect of benefit duration on post-unemployment wages can be estimated by exploiting the sharp jump in benefit eligibility at the age-40 threshold. This design isolates the Local Average Treatment Effect (LATE) for individuals near the cutoff.
+
+\newpage
+
+## Part 2
+
+The running variable in this case is a continuous variable — age at layoff. The treatment is equal to one when the age (the continuous variable) is greater than or equal to 40; otherwise, it is zero. This setup makes treatment assignment deterministic at the cutoff. Individuals aged 40 and above are automatically treated.
+
+$$
+\alpha_i = age_i - 40 \tag{1}
+$$
+
+The assignment of the treatment variable follows the rule below, where D is the treatment, X is the running variable, and C is the cutoff:
+
+$$
+D_i = 1 \ if \ X_i \ge C ,\\   D_i = 0 \ if \ X_i < C \tag{2}
+$$
+
+The key identifying assumption for a sharp regression discontinuity design is that nothing else changes at the cutoff except the treatment. Therefore, any discontinuity (jump) in outcomes at the cutoff is attributed to the treatment:
+
+$$
+\tau = \lim{\atop x\downarrow C} \ E[Y \ | \ X \ = x] - \lim{\atop x\uparrow C} \ E[Y \ | \ X = x] \tag{3}
+$$
+
+The full estimating equation that captures the discontinuity above and below the cutoff, using a second-order polynomial, is:
+
+$$
+Y_i = \alpha \ + \tau\ D_i \ + \beta_1\alpha_i \ + \beta_2\alpha_i^2 \ + \ \gamma(D_i *\alpha_i) \ + \ \gamma(D_i*\alpha_i^2) \ + \ \epsilon_i \tag{4}
+$$
+
+For this model to provide a valid estimate of the treatment effect, the sharp RDD assumption (defined in equation 3) must hold — meaning the potential outcomes must be continuous at the cutoff. If this assumption is met, the coefficient tau can be interpreted as the causal effect of treatment at the cutoff.
+
+To justify a causal interpretation, we also assume quasi-random assignment: individuals just above and just below the cutoff are as good as randomly assigned to treatment and control.
+
+It is crucial that nothing else changes at the cutoff — in other words, the distribution of covariates and other factors must be smooth at the threshold. To test this, we examine discontinuities in pre-treatment covariates; none should be present.
+
+Finally, a McCrary density test can be used to detect manipulation of the running variable. Evidence of "bunching" near the cutoff would suggest individuals are sorting around the threshold, violating the quasi-random assumption and potentially biasing the estimate of the local average treatment effect (LATE).
+
+\newpage
+
+## Part 3
+
+#### 1) Plot the density of age at layoff
+
+```{r, echo=FALSE, warning=FALSE}
+# Create 4-month (1/3 year) bins by rounding age to nearest 0.33
+data <- data %>% 
+  mutate(bin = floor(data$age * 12 / 4) * 4 / 12)
+
+
+ggplot(data = data, aes(x = data$age)) +
+  geom_histogram(binwidth = 4/12, color = "black", fill = "lightblue", boundary = 0) +
+  geom_vline(xintercept = 40, linetype = "dashed", color = "red", size = 1) +
+  labs(
+    title = "Histogram of Age at Layoff - (Graph 1)",
+    x = "Age at Layoff",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+Interpretation;
+
+This histogram shows the distribution of layoff ages for observations in the dataset. The cutoff for the regression discontinuity (RD) is at age 40. The quasi-random treatment assignment assumption appears to hold, as there is no obvious visual difference in the density of observations immediately on either side of the cutoff.
+
+The histogram shows a slightly increasing trend in layoffs during early career ages, followed by a decreasing trend as age increases, suggesting that older individuals experience layoffs less frequently.
+
+\newpage
+
+```{r, echo=FALSE, warning=FALSE}
+bin_width <- 4/12
+
+data <- data %>%
+  mutate(bin_center = round(age / bin_width) * bin_width)
+
+density_df <- data %>%
+  mutate(bin_center = round(age / bin_width) * bin_width) %>%
+  group_by(bin_center) %>%
+  summarise(nonemp = mean(nonemp, na.rm = TRUE), .groups = "drop")
+
+ggplot(density_df, aes(x = bin_center, y = nonemp)) +
+  geom_point(alpha = 0.4) +
+  geom_vline(xintercept = 40, color = "red", linetype = 2) +
+  stat_smooth(
+    data = subset(density_df, bin_center < 40),
+    aes(x = bin_center, y = nonemp),
+    method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "blue"
+  ) +
+  stat_smooth(
+    data = subset(density_df, bin_center >= 40),
+    aes(x = bin_center, y = nonemp),
+    method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "darkgreen"
+  ) +
+  labs(
+    title = "Title: Age at Layoff: (Graph 2)",
+    x = "Age at Layoff (X)",
+    y = "non-employment (Y)"
+  ) +
+  theme_minimal()
+```
+
+The discontinuity is located at age 40. One of the tasks outlined in the assignment was to fit second-order polynomials above and below the cutoff. This, by my interpretation, involves fitting local polynomial regression lines on either side of the threshold using nearby observational data.
+
+The first plot examines the density of age at layoff, using a bin width of 4/12 (equivalent to 4 months). This groups continuous age values into equal-width intervals, and then computes the average outcome within each bin. The same binning strategy is applied in the second graph, where local polynomial functions are fitted to the binned observational data.
+
+Graph two reveals a clear discontinuity at the cutoff — the fitted lines before and after age 40 show a noticeable break. When plotted using the binsreg package, this discontinuity is also evident, visually reinforcing the existence of a structural break at the threshold.
+
+```{r, echo=FALSE, warning=FALSE, results= 'hide', message=FALSE}
+#Run binsreg with polynomial fits on both sides of age = 40
+data <- data %>% 
+  mutate(bin = floor(data$nonemp * 12 / 4) * 4 / 12)
+
+binsreg(y = data$nonemp,
+          x = data$age,
+          by = ifelse(data$age >= 40, 1, 0),
+          at = 40,
+          polyreg = 2,
+          dots = TRUE,
+          line = TRUE,
+          ci = FALSE,
+          cb = FALSE)
+
+
+```
+
+This graph done in the R package binsreg shows a clear discontinuity at age 40. It is showing very similar to the graph above which is done in ggplot.
+
+\newpage
+
+#### 2) Plot the log previous wage against the age at layoff 
+
+```{r, echo=FALSE, warning=FALSE}
+bin_width <- 4/12
+
+data <- data %>%
+  mutate(bin_center = round(age / bin_width) * bin_width)
+
+density_df <- data %>%
+  mutate(bin_center = round(age / bin_width) * bin_width) %>%
+  group_by(bin_center) %>%
+  summarise(lwage0 = mean(lwage0, na.rm = TRUE), .groups = "drop")
+
+ggplot(density_df, aes(x = bin_center, y = lwage0)) +
+  geom_point(alpha = 0.4) +
+  geom_vline(xintercept = 40, color = "red", linetype = 2) +
+  stat_smooth(
+    data = subset(density_df, bin_center < 40),
+    aes(x = bin_center, y = lwage0),
+    method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "blue"
+  ) +
+  stat_smooth(
+    data = subset(density_df, bin_center >= 40),
+    aes(x = bin_center, y = lwage0),
+    method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "darkgreen"
+  ) +
+  labs(
+    title = "Title: Log previous wage against the age at layoff - (Graph 4)",
+    x = "Age (X)",
+    y = "Log monthly wage in previous job (Y)"
+  ) +
+  theme_minimal()
+```
+
+Graph 4 suggests that log monthly wages in previous jobs increase steadily up to just before age 40, after which they begin to decline. Importantly, there is no visible discontinuity at age 40, indicating that the treatment has no immediate effect on wages in the previous job. This pattern is more consistent with a "kink" regression discontinuity design (RDD), where the slope of the relationship changes, but there is no jump in the outcome at the cutoff.
+
+The downward trend after age 40 is likely driven by underlying labor market dynamics, rather than the treatment itself. For example, in many public sector jobs in Ireland—such as the Gardaí, firefighters, and similar roles—the cutoff age for entry is around 35 (now 50 though but that was only updated in last year) , due to mandatory pension policies that require at least 25 - 30 years of service. As a result, individuals laid off closer to age 40 are less likely to return to these career paths.
+
+Another plausible explanation is that younger workers are more willing or able to retrain and upskill, whereas older workers may face more barriers to doing so, leading to lower reemployment quality and wage trajectories.
+
+\newpage
+
+##### McCrary Density Test;
+
+This test examines whether there is manipulation of observations around the cutoff. If evidence of manipulation is found, it would violate the assumption of quasi-random assignment, leading to biased estimates of the treatment effect (Cunningham, Causal Inference: The Mixtape, p. 262).
+
+The output of the McCrary density test shows a coefficient of -4.7862 at the discontinuity, providing strong evidence of manipulation around the cutoff. This result indicates bunching—a disproportionate number of observations just below the age 40 threshold—suggesting that individuals or institutions may be strategically positioning themselves in relation to the cutoff.
+
+It is important to note that this test was conducted using all available observations, rather than relying on pre-specified bins. The presence of such bunching undermines the validity of the regression discontinuity design, as it suggests the running variable may not be truly exogenous at the cutoff.
+
+```{r, echo=FALSE}
+library(rddensity)
+rd_density <- rddensity(data$age, c = 40)
+invisible(rdplotdensity(rd_density, data$age))
+
+
+```
+
+```{r, echo=FALSE, warning=FALSE}
+library(rddensity)
+density_test <- rddensity(X = data$age, c = 40)
+summary(density_test)
+
+```
+
+\newpage
+
+##### Potential problem with outliners
+
+I included the density graph below out of curiosity about the distribution of the data. When the data was "trimmed" — meaning filtered to include only individuals aged between 32 and 48 — the distribution of observations appeared more symmetric and consistent compared to the full, untrimmed sample.
+
+The motivation for this was that, when plotting a histogram of the full dataset, there appeared to be outliers on both tails of the age distribution. This raised the idea of excluding those extreme values. However, I recognized that trimming the data in this way could potentially introduce bias, as it would involve omitting certain age bands, possibly distorting the estimation of effects around the cutoff.
+
+```{r, echo=FALSE, warning=FALSE}
+data_trimmed <- data %>%
+  filter(age >= 32, age <= 48)
+
+data_untrimmed <- ggplot(data, aes(x = age)) +
+  geom_histogram(binwidth = 0.33, fill = "skyblue", color = "black") +
+  labs(title = "Graph 5: Normal data",
+       x = "Age at Layoff", y = "Count") +
+  theme_minimal()
+
+trimmed <- ggplot(data_trimmed, aes(x = age)) +
+  geom_histogram(binwidth = 0.33, fill = "skyblue", color = "black") +
+  labs(title = "Trimmed data",
+       x = "Age at Layoff", y = "Count") +
+  theme_minimal()
+
+data_untrimmed + trimmed
+```
+
+\newpage
+
+## Part 4
+
+```{r, echo=FALSE, warning=FALSE}
+make_density_df <- function(data, outcome_var) {
+  data %>%
+    mutate(bin_center = round(age / bin_width) * bin_width) %>%
+    group_by(bin_center) %>%
+    summarise(y = mean(.data[[outcome_var]], na.rm = TRUE), .groups = "drop")
+}
+
+
+plot_binned <- function(density_df, y_label, title) {
+  ggplot(density_df, aes(x = bin_center, y = y)) +
+    geom_point(alpha = 0.4) +
+    geom_vline(xintercept = 40, color = "red", linetype = 2) +
+    stat_smooth(data = subset(density_df, bin_center < 40),
+                aes(x = bin_center, y = y),
+                method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "blue") +
+    stat_smooth(data = subset(density_df, bin_center >= 40),
+                aes(x = bin_center, y = y),
+                method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "darkgreen") +
+    labs(
+      title = title,
+      x = "Age at Layoff (Bin Center)",
+      y = y_label
+    ) +
+    theme_minimal()
+}
+
+## A. Non-employment duration
+df_nonemp <- make_density_df(data, "nonemp")
+plot_nonemp <- plot_binned(df_nonemp, "Unemployed count", "Graph 6: Unemployed time vs Age")
+
+## B. Job found within 39 weeks
+df_jobfind <- make_density_df(data, "jobfind")
+plot_jobfind <- plot_binned(df_jobfind, "Probability (new job < 39 Weeks)", "Graph 7: Job Finding within 39 Weeks")
+
+## C. Log wage in new job
+df_lwage1 <- make_density_df(data, "lwage1")
+plot_lwage1 <- plot_binned(df_lwage1, "Log Wage (New Job)", "Graph 8: Log Wage of new job")
+
+
+
+
+```
+
+```{r}
+print(plot_nonemp)
+
+```
+
+There is a clear discontinuity in the graph above at age 40, where we observe a noticeable jump in the number of weeks of unemployment that deviates from the expected trend. This pattern suggests that individuals just above the cutoff — who are eligible for longer unemployment benefits — tend to remain unemployed for a longer period before finding a new job.
+
+Assuming that assignment to either side of the cutoff is quasi-random, the only systematic difference between individuals just below and just above age 40 is the additional 9 weeks of unemployment benefits. Therefore, this discontinuity can be interpreted as evidence of a causal effect: longer benefit duration leads to longer spells of non-employment.
+
+\newpage
+
+```{r}
+print(plot_jobfind)
+```
+
+This graph shows a declining probability of finding a new job as age increases beyond 40. There appears to be a deviation from the predicted regression trend at the cutoff. Around age 30, the probability of finding new employment within 39 weeks is approximately 90%. However, at the cutoff age of 40, this probability drops from about 85% just before the threshold to around 83% just after.
+
+This visible discontinuity suggests that the extension in benefit duration available to individuals aged 40 and over may result in a slight delay in re-employment. If we assume that observations just above and below the cutoff are otherwise comparable, this drop in job-finding probability can be interpreted as evidence of a causal effect: longer benefits may lead to slower return to work.
+
+\newpage
+
+```{r}
+print(plot_lwage1)
+```
+
+Log wages appear to decline after age 40, but even prior to the cutoff, the regression line shows a downward trend, suggesting that falling wages begin before age 40. This may indicate that individuals who become unemployed later in their careers — around age 35 and beyond — experience decreasing wages upon re-employment.
+
+One possible explanation is that older workers who are made redundant may lack up-to-date skills that the labor market values, making it more difficult for them to command higher wages. In contrast, younger workers may be more likely to participate in retraining or upskilling programs, positioning themselves to re-enter the labor market at competitive or rising wage levels.
+
+\newpage
+
+## Part 5 
+
+The outcome variable (Y) is log wages, and the continuous running variable (X) is age. The model also includes a treatment dummy (D =1) if the individual is treated, and 0 otherwise). The following models will use the rdrobust package in R, which estimates a robust local polynomial regression. This approach provides valid statistical inference by automatically selecting the optimal bandwidth and applying bias correction.
+
+The reduced form refers to the direct regression of the outcome variable (Y) on the discontinuity at the cutoff (age = 40), without controlling for intermediate variables such as benefit duration. It estimates the total effect of being just above versus just below the cutoff. In essence, the reduced-form model captures the immediate impact of the treatment assignment by regressing the outcome directly on the running variable (age), centered at the cutoff.
+
+```{r, warning=FALSE, echo=FALSE}
+#reduced form full model 
+rd_out_full <- rdrobust(y = data$lwage1, x = data$age, c = 40)
+
+# with a plus or minus 5 year bandwidth 
+rd_out_5yr <- rdrobust(y = data$lwage1, x = data$age, c = 40, h = 5)
+
+#with a plus or minus 2 year bandwidth
+rd_out_2yr <- rdrobust(y = data$lwage1, x = data$age, c = 40, h = 2)
+
+#model 4
+#treated data 
+data <- data %>%
+  mutate(
+    treated = ifelse(age >= 40, 1, 0),
+    age_centered = age - 40
+  )
+
+#Linear control with interaction
+model_linear <- lm(lwage1 ~ treated + age_centered + treated:age_centered, data = data)
+
+#4th-order polynomial with interaction
+model_poly4 <- lm(lwage1 ~ treated * poly(age_centered, 4, raw = TRUE), data = data)
+
+
+```
+
+```{r, echo=FALSE, warning=FALSE}
+extract_lm_summary <- function(model, model_name) {
+  coefs <- summary(model)$coefficients
+  est <- coefs["treated", "Estimate"]
+  se  <- coefs["treated", "Std. Error"]
+  p   <- coefs["treated", "Pr(>|t|)"]
+  ci <- sprintf("[%.3f, %.3f]", est - 1.96 * se, est + 1.96 * se)
+  
+  data.frame(
+    Model = model_name,
+    Estimate = round(est, 3),
+    Std_Error = round(se, 3),
+    P_Value = round(p, 3),
+    CI = ci,
+    stringsAsFactors = FALSE
+  )
+}
+
+extract_rd_summary <- function(rd_obj, model_name) {
+  est <- rd_obj$coef[1]
+  se  <- rd_obj$se[1]
+  p   <- rd_obj$pv[1]
+  ci <- sprintf("[%.3f, %.3f]", est - 1.96 * se, est + 1.96 * se)
+  
+  data.frame(
+    Model = model_name,
+    Estimate = round(est, 3),
+    Std_Error = round(se, 3),
+    P_Value = round(p, 3),
+    CI = ci,
+    stringsAsFactors = FALSE
+  )
+}
+
+
+
+```
+
+```{r, echo=FALSE, warning=FALSE}
+rd_summary_all <- rbind(
+  extract_rd_summary(rd_out_full, "Full Sample "),
+  extract_rd_summary(rd_out_5yr, "±5 Year Bandwidth"),
+  extract_rd_summary(rd_out_2yr, "±2 Year Bandwidth"),
+  extract_lm_summary(model_linear, "OLS Linear + Interaction"),
+  extract_lm_summary(model_poly4, "OLS 4th-Order Polynomial + Interaction")
+)
+
+# Print summary table
+print(rd_summary_all)
+
+# Optional: format for markdown, HTML, etc.
+library(knitr)
+kable(rd_summary_all, caption = "Graph 9: Summary of Reduced-Form Estimates")
+
+```
+
+\newpage
+
+Interpretation of :
+
+In the full-sample model, there is no strong evidence—statistically or visually—of a discontinuity in log wages at the age 40 cutoff. The second model, which restricts the sample to a ±5-year bandwidth around the cutoff, also shows no significant discontinuity. Similarly, the third model, which narrows the bandwidth further to ±2 years, continues to show no evidence of a wage jump at the threshold.
+
+The purpose of narrowing the bandwidth is to focus more closely on observations near the cutoff, where treatment assignment is most plausibly random. However, as the bandwidth decreases, statistical significance diminishes and confidence intervals widen, suggesting that smaller bandwidths in this context may lead to less precise estimates, not more.
+
+Next, we turn to the OLS models with interaction terms. The interaction was defined by creating a treatment dummy: individuals under age 40 were coded as 0 (control), and those aged 40 or above were coded as 1 (treated), effectively splitting the sample at the cutoff.
+
+The linear OLS model with interaction reveals a statistically significant negative effect, indicating that log wages decrease at the cutoff when linear trends are accounted for on either side of the threshold. In contrast, the fourth-order polynomial with interaction yields a slightly positive estimate, which is marginally significant at the 10% level. This suggests a small increase in wages at the cutoff, though the result may be due to overfitting, a known issue with higher-order polynomials in RDD settings.
+
+Taken together, the nonparametric models (rdrobust) consistently show no evidence of a discontinuity, even as bandwidths are reduced. This finding is inconsistent with visual inspection, which appears to show a jump in wages. However, the McCrary density test revealed significant bunching at the cutoff, indicating manipulation of the running variable (age). This undermines the quasi-random assignment assumption required for causal inference in a sharp RDD.
+
+If individuals are able to manipulate their position relative to the cutoff, the treatment is no longer randomly assigned in a local neighborhood. This likely introduces discontinuities in pre-treatment covariates, violating the assumptions of RDD.
+
+### Conclusion
+
+Given the lack of consistent evidence across models and the strong indication of manipulation around the cutoff, there is reason to believe that the estimated treatment effects are biased. Therefore, the findings from this RDD should be interpreted with caution and are unlikely to represent any causal effect. It is also likely that the pre-treated group have discontinuities in there covariates, meaning that they are actively altering their behavior.
+
+\newpage
+
+# References:
+
+-   Cattaneo, Crump, Farrell and Feng (2025): [Binscatter Regressions](https://nppackages.github.io/references/Cattaneo-Crump-Farrell-Feng_2025_Stata.pdf). *Stata Journal* 25(1): 3-50.
+
+-   Cunningham, Scott. *Causal Inference: The Mixtape*. New Haven: Yale University Press, 2021.
+
+-   Wickham, Hadley, and Garrett Grolemund. *R for Data Science: Import, Tidy, Transform, Visualize, and Model Data*. O'Reilly Media, 2017.
+
+    ChatGPT was used for troubleshooting code and editing. All analysis, interpretation, and conclusions reflect my independent work and reference from above sources.
+
+\newpage
+
+## Appendix (code)
+
+```{r, include=TRUE, eval=FALSE}
+library(haven)
+library(stargazer)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(patchwork)
+library(binsreg)
+library(rdrobust)
+
+data_rdd_assignment <- read_dta("~/Masters 2023/Masters Year 2/Causal Inference and Policy Evaulation/Assignments/Assignment_2/data_rdd_assignment.dta")
+
+data <- data_rdd_assignment
+
+data <- data %>% 
+  mutate(bin = floor(data$age * 12 / 4) * 4 / 12)
+
+
+ggplot(data = data, aes(x = data$age)) +
+  geom_histogram(binwidth = 4/12, color = "black", fill = "lightblue", boundary = 0) +
+  geom_vline(xintercept = 40, linetype = "dashed", color = "red", size = 1) +
+  labs(
+    title = "Histogram of Age at Layoff - (Graph 1)",
+    x = "Age at Layoff",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+bin_width <- 4/12
+
+data <- data %>%
+  mutate(bin_center = round(age / bin_width) * bin_width)
+
+density_df <- data %>%
+  mutate(bin_center = round(age / bin_width) * bin_width) %>%
+  group_by(bin_center) %>%
+  summarise(nonemp = mean(nonemp, na.rm = TRUE), .groups = "drop")
+
+ggplot(density_df, aes(x = bin_center, y = nonemp)) +
+  geom_point(alpha = 0.4) +
+  geom_vline(xintercept = 40, color = "red", linetype = 2) +
+  stat_smooth(
+    data = subset(density_df, bin_center < 40),
+    aes(x = bin_center, y = nonemp),
+    method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "blue"
+  ) +
+  stat_smooth(
+    data = subset(density_df, bin_center >= 40),
+    aes(x = bin_center, y = nonemp),
+    method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "darkgreen"
+  ) +
+  labs(
+    title = "Title: Age at Layoff: (Graph 2)",
+    x = "Age at Layoff (X)",
+    y = "non-employment (Y)"
+  ) +
+  theme_minimal()
+
+data <- data %>% 
+  mutate(bin = floor(data$nonemp * 12 / 4) * 4 / 12)
+
+binsreg(y = data$nonemp,
+          x = data$age,
+          by = ifelse(data$age >= 40, 1, 0),
+          at = 40,
+          polyreg = 2,
+          dots = TRUE,
+          line = TRUE,
+          ci = FALSE,
+          cb = FALSE)
+
+bin_width <- 4/12
+
+data <- data %>%
+  mutate(bin_center = round(age / bin_width) * bin_width)
+
+density_df <- data %>%
+  mutate(bin_center = round(age / bin_width) * bin_width) %>%
+  group_by(bin_center) %>%
+  summarise(lwage0 = mean(lwage0, na.rm = TRUE), .groups = "drop")
+
+ggplot(density_df, aes(x = bin_center, y = lwage0)) +
+  geom_point(alpha = 0.4) +
+  geom_vline(xintercept = 40, color = "red", linetype = 2) +
+  stat_smooth(
+    data = subset(density_df, bin_center < 40),
+    aes(x = bin_center, y = lwage0),
+    method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "blue"
+  ) +
+  stat_smooth(
+    data = subset(density_df, bin_center >= 40),
+    aes(x = bin_center, y = lwage0),
+    method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "darkgreen"
+  ) +
+  labs(
+    title = "Title: Log previous wage against the age at layoff - (Graph 4)",
+    x = "Age at Layoff (X)",
+    y = "Log monthly wage in previous job (Y)"
+  ) +
+  theme_minimal()
+
+#Test for density 
+rd_density <- rddensity(data$age, c = 40)
+invisible(rdplotdensity(rd_density, data$age))
+
+density_test <- rddensity(X = data$age, c = 40)
+summary(density_test)
+
+#potential problems
+data_trimmed <- data %>%
+  filter(age >= 32, age <= 48)
+
+data_untrimmed <- ggplot(data, aes(x = age)) +
+  geom_histogram(binwidth = 0.33, fill = "skyblue", color = "black") +
+  labs(title = "Graph 5: Normal data",
+       x = "Age at Layoff", y = "Count") +
+  theme_minimal()
+
+trimmed <- ggplot(data_trimmed, aes(x = age)) +
+  geom_histogram(binwidth = 0.33, fill = "skyblue", color = "black") +
+  labs(title = "Trimmed data",
+       x = "Age at Layoff", y = "Count") +
+  theme_minimal()
+
+data_untrimmed + trimmed
+
+make_density_df <- function(data, outcome_var) {
+  data %>%
+    mutate(bin_center = round(age / bin_width) * bin_width) %>%
+    group_by(bin_center) %>%
+    summarise(y = mean(.data[[outcome_var]], na.rm = TRUE), .groups = "drop")
+}
+
+
+plot_binned <- function(density_df, y_label, title) {
+  ggplot(density_df, aes(x = bin_center, y = y)) +
+    geom_point(alpha = 0.4) +
+    geom_vline(xintercept = 40, color = "red", linetype = 2) +
+    stat_smooth(data = subset(density_df, bin_center < 40),
+                aes(x = bin_center, y = y),
+                method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "blue") +
+    stat_smooth(data = subset(density_df, bin_center >= 40),
+                aes(x = bin_center, y = y),
+                method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "darkgreen") +
+    labs(
+      title = title,
+      x = "Age at Layoff (Bin Center)",
+      y = y_label
+    ) +
+    theme_minimal()
+}
+
+## A. Non-employment duration
+df_nonemp <- make_density_df(data, "nonemp")
+plot_nonemp <- plot_binned(df_nonemp, "Weeks Unemployed", "Graph 6: Non-employment Duration vs Age")
+
+## B. Job found within 39 weeks
+df_jobfind <- make_density_df(data, "jobfind")
+plot_jobfind <- plot_binned(df_jobfind, "Probability (Job Found < 39 Weeks)", "Graph 7: Job Finding within 39 Weeks vs Age")
+
+## C. Log wage in new job
+df_lwage1 <- make_density_df(data, "lwage1")
+plot_lwage1 <- plot_binned(df_lwage1, "Log Wage (New Job)", "Graph 8: Log Wage in New Job vs Age")
+
+#part 5 code 
+#reduced form full model 
+rd_out_full <- rdrobust(y = data$lwage1, x = data$age, c = 40)
+
+# with a plus or minus 5 year bandwidth 
+rd_out_5yr <- rdrobust(y = data$lwage1, x = data$age, c = 40, h = 5)
+
+#with a plus or minus 2 year bandwidth
+rd_out_2yr <- rdrobust(y = data$lwage1, x = data$age, c = 40, h = 2)
+
+#model 4
+#treated data 
+data <- data %>%
+  mutate(
+    treated = ifelse(age >= 40, 1, 0),
+    age_centered = age - 40
+  )
+
+#Linear control with interaction
+model_linear <- lm(lwage1 ~ treated + age_centered + treated:age_centered, data = data)
+
+#4th-order polynomial with interaction
+model_poly4 <- lm(lwage1 ~ treated * poly(age_centered, 4, raw = TRUE), data = data)
+
+extract_lm_summary <- function(model, model_name) {
+  coefs <- summary(model)$coefficients
+  est <- coefs["treated", "Estimate"]
+  se  <- coefs["treated", "Std. Error"]
+  p   <- coefs["treated", "Pr(>|t|)"]
+  ci <- sprintf("[%.3f, %.3f]", est - 1.96 * se, est + 1.96 * se)
+  
+  data.frame(
+    Model = model_name,
+    Estimate = round(est, 3),
+    Std_Error = round(se, 3),
+    P_Value = round(p, 3),
+    CI = ci,
+    stringsAsFactors = FALSE
+  )
+}
+
+extract_rd_summary <- function(rd_obj, model_name) {
+  est <- rd_obj$coef[1]
+  se  <- rd_obj$se[1]
+  p   <- rd_obj$pv[1]
+  ci <- sprintf("[%.3f, %.3f]", est - 1.96 * se, est + 1.96 * se)
+  
+  data.frame(
+    Model = model_name,
+    Estimate = round(est, 3),
+    Std_Error = round(se, 3),
+    P_Value = round(p, 3),
+    CI = ci,
+    stringsAsFactors = FALSE
+  )
+}
+
+
+rd_summary_all <- rbind(
+  extract_rd_summary(rd_out_full, "Full Sample "),
+  extract_rd_summary(rd_out_5yr, "±5 Year Bandwidth"),
+  extract_rd_summary(rd_out_2yr, "±2 Year Bandwidth"),
+  extract_lm_summary(model_linear, "OLS Linear w/ Interaction"),
+  extract_lm_summary(model_poly4, "OLS 4th-Order Polynomial w/ Interaction")
+)
+
+# Print summary table
+print(rd_summary_all)
+
+# Optional: format for markdown, HTML, etc.
+library(knitr)
+kable(rd_summary_all, caption = "Graph 9: Summary of Reduced-Form Estimates Using rdrobust")
+```
